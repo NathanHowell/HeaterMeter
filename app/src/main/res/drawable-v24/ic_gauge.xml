@@ -1,0 +1,3 @@
+<com.mikepenz.iconics.IconicsDrawable xmlns:app="http://schemas.android.com/apk/res-auto"
+    app:ico_icon="ion-pie-graph"
+    app:ico_size="24dp" />
