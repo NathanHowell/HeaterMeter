@@ -44,6 +44,7 @@
                     android:contentDescription="@string/settings_tab"
                     android:onClick="startSettingsActivity"
                     android:src="@drawable/ic_settings" />
+
             </androidx.appcompat.widget.ActionMenuView>
 
         </androidx.appcompat.widget.Toolbar>

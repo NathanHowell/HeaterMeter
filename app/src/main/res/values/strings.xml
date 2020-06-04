@@ -8,6 +8,7 @@
 
     <!-- Connection Preferences -->
     <string name="server_url">HeaterMeter Address</string>
+    <string name="server_username">Username</string>
     <string name="server_password">Password</string>
 
     <string name="chart_tab">Chart</string>

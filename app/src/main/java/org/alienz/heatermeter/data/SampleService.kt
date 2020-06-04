@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.util.Log
 import android.widget.Toast
@@ -39,7 +40,7 @@ class SampleService : Service(), CoroutineScope, SharedPreferences.OnSharedPrefe
             .setContentText("HeaterMeter is syncing")
             .build()
 
-        startForeground(1, notification)
+        startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
 
         val preferences = PreferenceManager.getDefaultSharedPreferences(applicationContext)
 

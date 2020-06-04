@@ -1,7 +1,6 @@
 package org.alienz.heatermeter.ui.settings
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.text.InputType
 import android.util.AttributeSet
 import androidx.preference.EditTextPreference

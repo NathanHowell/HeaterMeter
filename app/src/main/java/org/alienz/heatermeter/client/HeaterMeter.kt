@@ -5,23 +5,21 @@ import com.google.gson.Gson
 import com.launchdarkly.eventsource.EventHandler
 import com.launchdarkly.eventsource.EventSource
 import com.launchdarkly.eventsource.MessageEvent
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.channels.*
-import retrofit2.Call
+import okhttp3.*
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.converter.scalars.ScalarsConverterFactory
+import retrofit2.http.Body
 import retrofit2.http.GET
-import java.lang.IllegalArgumentException
-import java.net.URI
+import retrofit2.http.POST
 import java.net.URL
 import java.time.Instant
-import java.util.*
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.CompletableFuture
-import java.util.function.Consumer
-import java.util.stream.Stream
-import java.util.stream.StreamSupport
 import kotlin.coroutines.CoroutineContext
 
 sealed class Event<T> {
@@ -145,17 +143,39 @@ interface HeaterMeter {
     @GET("/luci/lm/hist")
     suspend fun history(): Response<String>
 
-    @GET("/luci/lm/hmstatus")
-    suspend fun status(): Response<Response<Event.Status>>
+    @POST("/luci/admin/lm")
+    suspend fun auth(@Body body: RequestBody): Response<String>
+}
 
-    @GET("/luci/admin/lm")
-    suspend fun auth(): Call<String>
+class SysAuthCookieJar(private val baseUrl: URL) : CookieJar {
+    private val cookies = mutableSetOf<Cookie>()
+
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        return if (url.toString().startsWith(baseUrl.toString())) {
+            cookies.toList()
+        } else {
+            listOf()
+        }
+    }
+
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        if (url.toString().startsWith(baseUrl.toString())) {
+            this.cookies.addAll(cookies)
+        }
+    }
 }
 
 @ExperimentalCoroutinesApi
 class HeaterMeterClient(private val baseUrl: URL) : CoroutineScope {
     private val retrofit = Retrofit.Builder()
         .baseUrl(baseUrl)
+        .client(
+            OkHttpClient()
+                .newBuilder()
+                .followRedirects(false) // needed to get auth cookie
+                .cookieJar(SysAuthCookieJar(baseUrl))
+                .build())
+        .addConverterFactory(ScalarsConverterFactory.create())
         .addConverterFactory(GsonConverterFactory.create())
         .build()
 
@@ -182,7 +202,7 @@ class HeaterMeterClient(private val baseUrl: URL) : CoroutineScope {
 
         try {
             for (line in history.lines()) {
-                val tokens = history.split(',')
+                val tokens = line.split(',')
                 if (tokens.size == 7) {
                     val time = tokens[0].toLongOrNull() ?: Long.MIN_VALUE
                     val setPoint = tokens[1].toDoubleOrNull() ?: Double.NaN
@@ -219,17 +239,33 @@ class HeaterMeterClient(private val baseUrl: URL) : CoroutineScope {
     }
 
     private fun HeaterMeter.Event.Status.toSample(): Event<Sample> {
-        throw IllegalArgumentException()
+        return Event.of(
+            Sample(
+                time = Instant.ofEpochSecond(time),
+                setPoint = Temperature(set),
+                lidOpen = lid > 0,
+                fan = FanSpeed(fan.c),
+                probes = temps.mapIndexed { index, it ->
+                    Probe(
+                        name = ProbeName(it.n),
+                        index = index,
+                        temperature = Temperature(it.c),
+                        degreesPerHour = DegreesPerHour(it.dph)
+                    )
+                }.toTypedArray()
+            )
+        )
     }
 
     private fun HeaterMeter.Event.Peaks.toSample(): Event<Sample> {
         throw IllegalArgumentException()
     }
 
-    fun stream(): ReceiveChannel<Event<Sample>> = produce<Event<Sample>> {
+    fun stream(): ReceiveChannel<Event<Sample>> {
+        val channel = Channel<Event<Sample>>(16)
         val handler = object : EventHandler {
             override fun onOpen() {
-                channel.sendBlocking<Event<Sample>>(Event.StreamOpened<Sample>())
+                channel.sendBlocking(Event.StreamOpened<Sample>())
             }
 
             override fun onComment(comment: String?) {
@@ -237,25 +273,20 @@ class HeaterMeterClient(private val baseUrl: URL) : CoroutineScope {
             }
 
             override fun onMessage(event: String, messageEvent: MessageEvent) {
-                val payload = when (event) {
+                when (event) {
                     "hmstatus" ->
-                        gson.fromJson(
+                        channel.sendBlocking(gson.fromJson(
                             messageEvent.data,
                             HeaterMeter.Event.Status::class.java
-                        ).toSample()
-                    "peaks" ->
-                        gson.fromJson(
-                            messageEvent.data,
-                            HeaterMeter.Event.Peaks::class.java
-                        ).toSample()
-                    "log" -> throw IllegalArgumentException()
+                        ).toSample())
+//                    "peaks" ->
+//                        gson.fromJson(
+//                            messageEvent.data,
+//                            HeaterMeter.Event.Peaks::class.java
+//                        ).toSample()
                     "alarm" -> throw IllegalArgumentException() // admin/lm/alarm
-                    "error" -> throw IllegalArgumentException()
-                    "pidint" -> throw IllegalArgumentException()
-                    else -> throw IllegalArgumentException()
+                    else -> Log.d(this::class.java.toString(), "Ignoring event $event")
                 }
-
-                channel.sendBlocking(payload)
             }
 
             override fun onClosed() {
@@ -263,7 +294,8 @@ class HeaterMeterClient(private val baseUrl: URL) : CoroutineScope {
             }
 
             override fun onError(t: Throwable?) {
-                t?.apply { throw this }
+                Log.w(this::class.java.toString(), "SSE error: ${t?.message}", t)
+                // t?.apply { throw this }
             }
         }
 
@@ -271,6 +303,21 @@ class HeaterMeterClient(private val baseUrl: URL) : CoroutineScope {
             .build()
 
         eventSource.start()
+
+        return channel
+    }
+
+    suspend fun login(username: String, password: String) {
+        val response = hm.auth(
+            FormBody.Builder()
+                .add("luci_username", username)
+                .add("luci_password", password)
+                .build()
+        )
+
+        if (!response.isSuccessful && response.code() != 302) {
+            throw IllegalStateException()
+        }
     }
 
     override val coroutineContext: CoroutineContext

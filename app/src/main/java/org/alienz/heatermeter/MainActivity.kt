@@ -1,25 +1,19 @@
 package org.alienz.heatermeter
 
 import android.content.Intent
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.view.View
-import androidx.core.app.ShareCompat
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
-import androidx.preference.PreferenceManager
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
-import com.mikepenz.iconics.Iconics
-import com.mikepenz.iconics.typeface.library.ionicons.Ionicons
 import org.alienz.heatermeter.data.SampleService
 import org.alienz.heatermeter.ui.AlarmFragment
 import org.alienz.heatermeter.ui.ChartFragment
 import org.alienz.heatermeter.ui.GaugeFragment
-import org.alienz.heatermeter.ui.settings.SettingsFragment
-import java.lang.IllegalArgumentException
 
 class MainActivity : AppCompatActivity() {
     private lateinit var tabLayout: TabLayout
