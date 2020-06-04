@@ -1,9 +1,12 @@
 package org.alienz.heatermeter.client
 
+import android.util.Log
 import com.google.gson.Gson
 import com.launchdarkly.eventsource.EventHandler
 import com.launchdarkly.eventsource.EventSource
 import com.launchdarkly.eventsource.MessageEvent
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.*
 import retrofit2.Call
 import retrofit2.Response
 import retrofit2.Retrofit
@@ -11,6 +14,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import java.lang.IllegalArgumentException
 import java.net.URI
+import java.net.URL
 import java.time.Instant
 import java.util.*
 import java.util.concurrent.ArrayBlockingQueue
@@ -18,6 +22,28 @@ import java.util.concurrent.CompletableFuture
 import java.util.function.Consumer
 import java.util.stream.Stream
 import java.util.stream.StreamSupport
+import kotlin.coroutines.CoroutineContext
+
+sealed class Event<T> {
+    data class Sample<T>(val value: T) : Event<T>()
+
+    class HistoryOpened<T> : Event<T>()
+    class HistoryClosed<T> : Event<T>()
+    class StreamOpened<T> : Event<T>()
+    class StreamClosed<T> : Event<T>()
+
+    fun <R> map(fn: (T) -> R): Event<R> = when (this) {
+        is Sample -> Sample(fn(this.value))
+        is HistoryOpened -> HistoryOpened()
+        is HistoryClosed -> HistoryClosed()
+        is StreamOpened -> StreamOpened()
+        is StreamClosed -> StreamClosed()
+    }
+
+    companion object {
+        fun <T> of(value: T): Sample<T> = Sample(value)
+    }
+}
 
 inline class Temperature(val degrees: Double)
 
@@ -70,7 +96,7 @@ data class Sample(
     }
 }
 
-interface HeaterMeter2 {
+interface HeaterMeter {
     data class Fan(val c: Double) // , val a: Int, val f: Int)
 
     data class Temp(val n: String, val c: Double, val dph: Double, val a: TempA)
@@ -84,7 +110,8 @@ interface HeaterMeter2 {
             val lid: Double,
             val fan: Fan,
             val adc: Array<Int>,
-            val temps: Array<Temp>): Event() {
+            val temps: Array<Temp>
+        ) : Event() {
             override fun equals(other: Any?): Boolean {
                 if (this === other) return true
                 if (javaClass != other?.javaClass) return false
@@ -112,91 +139,115 @@ interface HeaterMeter2 {
             }
         }
 
-        data class Peaks(val foo: Int): Event()
+        data class Peaks(val foo: Int) : Event()
     }
 
     @GET("/luci/lm/hist")
-    fun history(): CompletableFuture<Response<String>>
+    suspend fun history(): Response<String>
 
     @GET("/luci/lm/hmstatus")
-    fun status(): CompletableFuture<Response<Event.Status>>
+    suspend fun status(): Response<Response<Event.Status>>
 
     @GET("/luci/admin/lm")
-    fun auth(): Call<String>
+    suspend fun auth(): Call<String>
 }
 
-object HeaterMeterClient {
+@ExperimentalCoroutinesApi
+class HeaterMeterClient(private val baseUrl: URL) : CoroutineScope {
     private val retrofit = Retrofit.Builder()
-        .baseUrl("http://10.0.1.111")
+        .baseUrl(baseUrl)
         .addConverterFactory(GsonConverterFactory.create())
         .build()
 
-    val hm = retrofit.create(HeaterMeter2::class.java)
+    val hm = retrofit.create(HeaterMeter::class.java)
     private val gson = Gson()
 
-    fun all(): Stream<Sample> {
-        return Stream.concat(history(), stream())
+    fun all(): ReceiveChannel<Event<Sample>> = produce {
+        history().consumeEach { send(it) }
+        stream().consumeEach { send(it) }
     }
 
-    fun history(): Stream<Sample> {
-        val spliterator = QueueSpliterator<String>(1)
-        hm.history().thenAccept {
-            val body = it.body()
-            if (it.isSuccessful && body != null) {
-                spliterator.put(body)
-            }
+    private suspend fun history(): ReceiveChannel<Event<Sample>> {
+        val history = hm.history()
+        val body = history.body()
+        return parseHistory(body)
+    }
+
+    private fun parseHistory(history: String?): ReceiveChannel<Event<Sample>> = produce {
+        if (history == null) {
+            return@produce
         }
 
-        return StreamSupport.stream(spliterator, false)
-            .flatMap { parseHistory(it) }
-    }
+        send(Event.HistoryOpened())
 
-    private fun parseHistory(history: String): Stream<Sample> {
-        return history.lines().mapNotNull { history ->
-            val tokens = history.split(',')
-            if (tokens.size == 7) {
-                val time = tokens[0].toLongOrNull() ?: Long.MIN_VALUE
-                val setPoint = tokens[1].toDoubleOrNull() ?: Double.NaN
-                val probes = tokens
-                    .slice(2..5)
-                    .mapIndexed { index, temperature ->
-                        Probe(
-                            name = ProbeName.names[index],
-                            index = index,
-                            temperature = Temperature(temperature.toDoubleOrNull() ?: Double.NaN),
-                            degreesPerHour = DegreesPerHour(Double.NaN)
+        try {
+            for (line in history.lines()) {
+                val tokens = history.split(',')
+                if (tokens.size == 7) {
+                    val time = tokens[0].toLongOrNull() ?: Long.MIN_VALUE
+                    val setPoint = tokens[1].toDoubleOrNull() ?: Double.NaN
+                    val probes = tokens
+                        .slice(2..5)
+                        .mapIndexed { index, temperature ->
+                            Probe(
+                                name = ProbeName.names[index],
+                                index = index,
+                                temperature = Temperature(
+                                    temperature.toDoubleOrNull() ?: Double.NaN
+                                ),
+                                degreesPerHour = DegreesPerHour(Double.NaN)
+                            )
+                        }
+                    val fanSpeed = tokens[6].toDoubleOrNull() ?: Double.NaN
+
+                    send(
+                        Event.of(
+                            Sample(
+                                time = Instant.ofEpochSecond(time),
+                                setPoint = Temperature(setPoint),
+                                lidOpen = fanSpeed < 0 || fanSpeed.isNaN(),
+                                fan = FanSpeed(fanSpeed),
+                                probes = probes.toTypedArray()
+                            )
                         )
-                    }
-                val fanSpeed = tokens[6].toDoubleOrNull() ?: Double.NaN
-
-                Sample(
-                    time = Instant.ofEpochSecond(time),
-                    setPoint = Temperature(setPoint),
-                    lidOpen = fanSpeed < 0 || fanSpeed.isNaN(),
-                    fan = FanSpeed(fanSpeed),
-                    probes = probes.toTypedArray()
-                )
-            } else {
-                null
+                    )
+                }
             }
-        }.stream()
+        } finally {
+            send(Event.HistoryClosed())
+        }
     }
 
+    private fun HeaterMeter.Event.Status.toSample(): Event<Sample> {
+        throw IllegalArgumentException()
+    }
 
-    fun stream(): Stream<Sample> {
-        val spliterator = QueueSpliterator<HeaterMeter2.Event>(16)
+    private fun HeaterMeter.Event.Peaks.toSample(): Event<Sample> {
+        throw IllegalArgumentException()
+    }
 
+    fun stream(): ReceiveChannel<Event<Sample>> = produce<Event<Sample>> {
         val handler = object : EventHandler {
             override fun onOpen() {
+                channel.sendBlocking<Event<Sample>>(Event.StreamOpened<Sample>())
             }
 
             override fun onComment(comment: String?) {
+                // ignored
             }
 
             override fun onMessage(event: String, messageEvent: MessageEvent) {
                 val payload = when (event) {
-                    "hmstatus" -> gson.fromJson(messageEvent.data, HeaterMeter2.Event.Status::class.java)
-                    "peaks" -> gson.fromJson(messageEvent.data, HeaterMeter2.Event.Peaks::class.java)
+                    "hmstatus" ->
+                        gson.fromJson(
+                            messageEvent.data,
+                            HeaterMeter.Event.Status::class.java
+                        ).toSample()
+                    "peaks" ->
+                        gson.fromJson(
+                            messageEvent.data,
+                            HeaterMeter.Event.Peaks::class.java
+                        ).toSample()
                     "log" -> throw IllegalArgumentException()
                     "alarm" -> throw IllegalArgumentException() // admin/lm/alarm
                     "error" -> throw IllegalArgumentException()
@@ -204,10 +255,11 @@ object HeaterMeterClient {
                     else -> throw IllegalArgumentException()
                 }
 
-                spliterator.put(payload)
+                channel.sendBlocking(payload)
             }
 
             override fun onClosed() {
+                channel.sendBlocking<Event<Sample>>(Event.StreamClosed())
             }
 
             override fun onError(t: Throwable?) {
@@ -215,36 +267,12 @@ object HeaterMeterClient {
             }
         }
 
-        val eventSource = EventSource.Builder(handler, URI("http://10.0.1.111/luci/lm/stream"))
+        val eventSource = EventSource.Builder(handler, URL(baseUrl, "/luci/lm/stream").toURI())
             .build()
 
-        val stream = StreamSupport.stream(spliterator, false)
-
         eventSource.start()
-
-        return stream.flatMap {
-            when (it) {
-                is HeaterMeter2.Event.Status ->
-                    Stream.of(
-                        Sample(
-                            time = Instant.ofEpochSecond(it.time),
-                            setPoint = Temperature(it.set),
-                            lidOpen = it.lid > 0.0,
-                            fan = FanSpeed(it.fan.c),
-                            probes = it.temps
-                                .mapIndexed { index, x ->
-                                    Probe(
-                                        name = ProbeName(x.n),
-                                        index = index,
-                                        temperature = Temperature(x.c),
-                                        degreesPerHour = DegreesPerHour(x.dph)
-                                    )
-                                }
-                                .toTypedArray()
-                        )
-                    )
-                else -> Stream.of()
-            }
-        }
     }
+
+    override val coroutineContext: CoroutineContext
+        get() = GlobalScope.coroutineContext + Dispatchers.IO
 }

@@ -1,25 +1,19 @@
 <resources>
-    <string name="app_name">Heater Meter</string>
+    <string name="app_name">HeaterMeter</string>
     <string name="title_activity_settings">SettingsActivity</string>
 
     <!-- Preference Titles -->
-    <string name="messages_header">Messages</string>
-    <string name="sync_header">Sync</string>
+    <string name="connection_header">Connection</string>
+    <string name="sync_header">Device</string>
 
-    <!-- Messages Preferences -->
-    <string name="signature_title">Your signature</string>
-    <string name="reply_title">Default reply action</string>
-
-    <!-- Sync Preferences -->
-    <string name="sync_title">Sync email periodically</string>
-    <string name="attachment_title">Download incoming attachments</string>
-    <string name="attachment_summary_on">Automatically download attachments for incoming emails
-    </string>
-    <string name="attachment_summary_off">Only download attachments when manually requested</string>
+    <!-- Connection Preferences -->
     <string name="server_url">HeaterMeter Address</string>
+    <string name="server_password">Password</string>
+
     <string name="chart_tab">Chart</string>
     <string name="gauge_tab">Gauge</string>
     <string name="settings_tab">Settings</string>
     <!-- TODO: Remove or change this placeholder text -->
     <string name="hello_blank_fragment">Hello blank fragment</string>
+    <string name="alarm_tab">Alarms</string>
 </resources>
