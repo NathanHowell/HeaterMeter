@@ -1,0 +1,84 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "c8be42b68233938844b29ccff8a8b217",
+    "entities": [
+      {
+        "tableName": "probe_names",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`index` INTEGER NOT NULL, `name` TEXT, PRIMARY KEY(`index`))",
+        "fields": [
+          {
+            "fieldPath": "index",
+            "columnName": "index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "columnNames": [
+            "index"
+          ],
+          "autoGenerate": false
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "samples",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`time` INTEGER NOT NULL, `lid_open` INTEGER NOT NULL, `probes` TEXT NOT NULL, `set_point_temperature` REAL NOT NULL, `fan_speed` REAL NOT NULL, PRIMARY KEY(`time`))",
+        "fields": [
+          {
+            "fieldPath": "time",
+            "columnName": "time",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lidOpen",
+            "columnName": "lid_open",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "probes",
+            "columnName": "probes",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "setPoint.degrees",
+            "columnName": "set_point_temperature",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fan.rpm",
+            "columnName": "fan_speed",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "columnNames": [
+            "time"
+          ],
+          "autoGenerate": false
+        },
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c8be42b68233938844b29ccff8a8b217')"
+    ]
+  }
+}

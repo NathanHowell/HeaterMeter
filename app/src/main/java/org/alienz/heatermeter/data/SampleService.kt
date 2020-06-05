@@ -13,15 +13,14 @@ import android.widget.Toast
 import androidx.core.app.NotificationManagerCompat
 import androidx.preference.PreferenceManager
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.channels.consume
 import org.alienz.heatermeter.client.Event
-import org.alienz.heatermeter.client.Sample
+import org.alienz.heatermeter.client.HeaterMeterClient
 import org.alienz.heatermeter.ui.settings.SettingsFragment
-import java.util.concurrent.atomic.AtomicReference
+import java.net.URL
 import kotlin.coroutines.CoroutineContext
 
 class SampleService : Service(), CoroutineScope, SharedPreferences.OnSharedPreferenceChangeListener {
-    private var events: AtomicReference<ReceiveChannel<Event<Sample>>?> = AtomicReference()
     private val coroutineExceptionHandler = CoroutineExceptionHandler { _, t ->
         Log.e(this@SampleService::class.qualifiedName, "Failed: ${t.message}", t)
         GlobalScope.launch(Dispatchers.Main) {
@@ -63,17 +62,53 @@ class SampleService : Service(), CoroutineScope, SharedPreferences.OnSharedPrefe
     }
 
     @ExperimentalCoroutinesApi
-    private fun restartEvents(sharedPreferences: SharedPreferences): Job = launch {
-        val stream = HeaterMeterViewModel(sharedPreferences).restart()
-        events.getAndSet(stream)?.cancel()
-
-        for (foo in stream) {
-            println(foo)
+    private fun restartEvents(sharedPreferences: SharedPreferences) {
+        synchronized(jobLock) {
+            currentJob?.cancel()
+            currentJob = launch { streamToDb(sharedPreferences) }
         }
-//
-//        launch(Dispatchers.Main) {
-//
-//        }
+    }
+
+    private var currentJob: Job? = null
+    private val jobLock = object {}
+
+    @ExperimentalCoroutinesApi
+    suspend fun streamToDb(sharedPreferences: SharedPreferences) {
+        val db = AppDatabase.getInstance(applicationContext)
+        val samplesDao = db.samples()
+        val namesDao = db.names()
+
+        withContext(coroutineExceptionHandler + Dispatchers.IO) {
+            val serverUrl = URL(sharedPreferences.getString(SettingsFragment.serverUrl, null))
+            val client = HeaterMeterClient(serverUrl)
+            val (samples, names) = client.all()
+
+            launch {
+                samples.consume {
+                    while (true) {
+                        when (val e = receive()) {
+                            is Event.Sample -> {
+                                Log.i("Sample", "received $e")
+                                samplesDao.insert(e.value)
+                            }
+                        }
+                    }
+                }
+            }
+
+            launch {
+                names.consume {
+                    val seen = mutableMapOf<Int, String?>()
+                    while (true) {
+                        val e = receive()
+                        if (seen[e.index] != e.name) {
+                            Log.i("ProbeName", "received $e")
+                            namesDao.insert()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     override fun onBind(intent: Intent): IBinder? = null
