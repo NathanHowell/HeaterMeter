@@ -74,12 +74,14 @@ class SampleService : Service(), CoroutineScope, SharedPreferences.OnSharedPrefe
 
     @ExperimentalCoroutinesApi
     suspend fun streamToDb(sharedPreferences: SharedPreferences) {
+        val serverUrl = sharedPreferences.getString(SettingsFragment.serverUrl, null) ?: return
+
         val db = AppDatabase.getInstance(applicationContext)
         val samplesDao = db.samples()
         val namesDao = db.names()
 
         withContext(coroutineExceptionHandler + Dispatchers.IO) {
-            val serverUrl = URL(sharedPreferences.getString(SettingsFragment.serverUrl, null))
+            val serverUrl = URL(serverUrl)
             val client = HeaterMeterClient(serverUrl)
             val (samples, names) = client.all()
 
@@ -104,6 +106,7 @@ class SampleService : Service(), CoroutineScope, SharedPreferences.OnSharedPrefe
                         if (seen[e.index] != e.name) {
                             Log.i("ProbeName", "received $e")
                             namesDao.insert()
+                            seen[e.index] = e.name
                         }
                     }
                 }

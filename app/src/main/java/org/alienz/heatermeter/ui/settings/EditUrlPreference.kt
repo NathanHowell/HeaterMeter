@@ -23,6 +23,6 @@ class EditUrlPreference(context: Context?, attrs: AttributeSet) : EditTextPrefer
     }
 
     override fun getSummary(): CharSequence {
-        return super.getText()
+        return super.getText() ?: ""
     }
 }

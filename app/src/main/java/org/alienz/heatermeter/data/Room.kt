@@ -3,6 +3,8 @@ package org.alienz.heatermeter.data
 import android.content.Context
 import androidx.lifecycle.LiveData
 import androidx.room.*
+import com.google.gson.Gson
+import java.time.Duration
 import java.time.Instant
 
 data class Temperature(@ColumnInfo(name = "temperature") val degrees: Double)
@@ -65,19 +67,34 @@ class Converters {
     fun longToInstant(instant: Long): Instant = Instant.ofEpochMilli(instant)
 
     @TypeConverter
-    fun probesToString(probes: Array<Probe>): String = "FOO"
+    fun probesToString(probes: Array<Probe>): String {
+        return gson.toJson(probes)
+    }
 
     @TypeConverter
-    fun stringToProbes(probes: String): Array<Probe> = arrayOf()
+    fun stringToProbes(probes: String): Array<Probe> {
+        return gson.fromJson(probes, Array<Probe>::class.java)
+    }
+
+    companion object {
+        private val gson = Gson()
+            .newBuilder()
+            .serializeSpecialFloatingPointValues()
+            .create()
+    }
 }
 
 @Dao
-interface SamplesDao {
-    @Query("SELECT * FROM samples ORDER BY time DESC LIMIT 1000")
-    fun recent(): LiveData<List<Sample>>
+abstract class SamplesDao {
+    @Query("SELECT * FROM samples WHERE time >= (:threshold) ORDER BY time ASC")
+    protected abstract fun recent(threshold: Long): LiveData<List<Sample>>
+
+    fun recent(threshold: Instant): LiveData<List<Sample>> {
+        return recent(threshold.toEpochMilli())
+    }
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insert(vararg samples: Sample)
+    abstract suspend fun insert(vararg samples: Sample)
 }
 
 @Dao

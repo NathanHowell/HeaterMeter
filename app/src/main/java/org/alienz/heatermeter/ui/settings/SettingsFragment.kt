@@ -12,7 +12,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
         findPreference<EditTextPreference>(serverPassword)!!.apply {
             setSummaryProvider {
-                if (text.isNotEmpty()) "*".repeat(16) else "<blank>"
+                if (text?.isNotEmpty() == true) "*".repeat(16) else "<blank>"
             }
 
             setOnBindEditTextListener {
