@@ -95,6 +95,13 @@ abstract class SamplesDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun insert(vararg samples: Sample)
+
+    @Query("DELETE FROM samples WHERE time < (:threshold)")
+    protected abstract suspend fun trim(threshold: Long)
+
+    suspend fun trim(threshold: Instant) {
+        return trim(threshold.toEpochMilli())
+    }
 }
 
 @Dao
