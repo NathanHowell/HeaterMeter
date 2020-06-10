@@ -24,37 +24,37 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(R.layout.main_activity)
 
-        tabLayout = findViewById(R.id.tabs)
-        viewPager = findViewById(R.id.pager)
-
-        viewPager.adapter = object : FragmentStateAdapter(this) {
-            override fun getItemCount(): Int = 3
-
-            override fun createFragment(position: Int): Fragment {
-                return when (position) {
-                    0 -> ChartFragment()
-                    1 -> GaugeFragment()
-                    2 -> AlarmFragment()
-                    else -> throw IllegalArgumentException()
-                }
-            }
-        }
-
-        val oldTabs = (0 until tabLayout.tabCount)
-            .map { tabLayout.getTabAt(it) }
-            .map {
-                object {
-                    val text = it?.text
-                    val icon = it?.icon
-                }
-            }
-            .toTypedArray()
-
-        TabLayoutMediator(tabLayout, viewPager) { tab, position ->
-            val oldTab = oldTabs[position]
-            tab.text = oldTab.text
-            tab.icon = oldTab.icon
-        }.attach()
+//        tabLayout = findViewById(R.id.tabs)
+//        viewPager = findViewById(R.id.pager)
+//
+//        viewPager.adapter = object : FragmentStateAdapter(this) {
+//            override fun getItemCount(): Int = 3
+//
+//            override fun createFragment(position: Int): Fragment {
+//                return when (position) {
+//                    0 -> ChartFragment()
+//                    1 -> GaugeFragment()
+//                    2 -> AlarmFragment()
+//                    else -> throw IllegalArgumentException()
+//                }
+//            }
+//        }
+//
+//        val oldTabs = (0 until tabLayout.tabCount)
+//            .map { tabLayout.getTabAt(it) }
+//            .map {
+//                object {
+//                    val text = it?.text
+//                    val icon = it?.icon
+//                }
+//            }
+//            .toTypedArray()
+//
+//        TabLayoutMediator(tabLayout, viewPager) { tab, position ->
+//            val oldTab = oldTabs[position]
+//            tab.text = oldTab.text
+//            tab.icon = oldTab.icon
+//        }.attach()
     }
 
     override fun onStart() {
@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
 
     fun startSettingsActivity(view: View) {
         val intent = Intent(applicationContext, SettingsActivity::class.java)
+
         startActivity(intent)
     }
 }

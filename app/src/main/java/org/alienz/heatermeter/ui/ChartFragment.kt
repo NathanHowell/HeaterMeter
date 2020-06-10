@@ -1,14 +1,11 @@
 package org.alienz.heatermeter.ui
 
-import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
-import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.graphics.toColor
-import androidx.core.graphics.toColorInt
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModelProviders
@@ -19,8 +16,10 @@ import com.github.mikephil.charting.data.Entry
 import com.github.mikephil.charting.data.LineData
 import com.github.mikephil.charting.data.LineDataSet
 import com.github.mikephil.charting.formatter.ValueFormatter
+import kotlinx.android.synthetic.main.chart_fragment.*
 import org.alienz.heatermeter.R
 import org.alienz.heatermeter.data.NamesViewModel
+import org.alienz.heatermeter.data.ProbeName
 import org.alienz.heatermeter.data.Sample
 import org.alienz.heatermeter.data.SamplesViewModel
 import java.time.Duration
@@ -52,7 +51,6 @@ class ChartFragment : Fragment() {
 
         namesViewModel = ViewModelProviders.of(this).get(NamesViewModel::class.java)
         samplesViewModel = ViewModelProviders.of(this).get(SamplesViewModel::class.java)
-
     }
 
     override fun onCreateView(
@@ -66,7 +64,13 @@ class ChartFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        val lineChart: LineChart = view.findViewById(R.id.chart)
+        val refresh = this.swipe_container
+        refresh.setOnRefreshListener {
+            println("refresh")
+            refresh.isRefreshing = false
+        }
+
+        val lineChart = this.chart
 
         lineChart.setTouchEnabled(true)
 
@@ -82,7 +86,6 @@ class ChartFragment : Fragment() {
             }
 
             position = XAxis.XAxisPosition.BOTTOM
-            mEntries
         }
 
         lineChart.axisLeft.apply {
@@ -91,16 +94,36 @@ class ChartFragment : Fragment() {
             setDrawGridLines(false)
         }
 
-        lineChart.axisRight.apply {
-            axisMaximum = 350.0f
-            axisMinimum = 0.0f
-        }
-
         samplesViewModel
             .recentSamples()
             .observe(
                 viewLifecycleOwner,
                 Observer { samples -> updateChartData(lineChart, samples) })
+
+        namesViewModel
+            .names()
+            .observe(
+                viewLifecycleOwner,
+                Observer { names -> updateChartLegend(names) }
+            )
+    }
+
+    private fun updateChartLegend(names: List<ProbeName>) {
+        if (names.isEmpty()) {
+            return
+        }
+
+        Log.i(this::class.java.simpleName, "Updating chart with new samples")
+
+        val probeNames = names
+            .map { 3 + it.index to (it.name ?: "") }
+            .toMap()
+
+        chart.lineData?.dataSets?.forEachIndexed { index, ds ->
+            probeNames[index]?.also {
+                ds.label = it
+            }
+        }
     }
 
     private fun updateChartData(lineChart: LineChart, samples: List<Sample>) {
@@ -142,8 +165,15 @@ class ChartFragment : Fragment() {
             .forEach{ lineData.dataSets[it].clear() }
 
         // create datasets for new series
-        (lineData.dataSetCount .. (entries.keys.max() ?: 0)).forEach { _ ->
-            lineData.addDataSet(LineDataSet(mutableListOf(), "foo"))
+        val probeNames = namesViewModel
+            .names()
+            .value
+            ?.map { 3 + it.index to (it.name ?: "") }
+            ?.toMap() ?: mapOf()
+        val seriesNames = mapOf(0 to "Fan", 1 to "Lid Open", 2 to "Set Point") + probeNames
+        (lineData.dataSetCount .. (entries.keys.max() ?: 0)).forEach { index ->
+            val ds = LineDataSet(mutableListOf(), seriesNames.getOrDefault(index, "Unknown"))
+            lineData.addDataSet(ds)
         }
 
         entries.forEach { (k, v) ->
@@ -164,6 +194,10 @@ class ChartFragment : Fragment() {
                 5 -> 0xf229977
                 else -> -0x7feeeeee
             }.let { alpha or it }.toColor().toArgb()
+
+            if (k == 0) {
+                lineDataSet.setDrawFilled(true)
+            }
 
             lineDataSet.lineWidth = 2.0f
             lineDataSet.setDrawCircles(false)
@@ -189,7 +223,7 @@ class ChartFragment : Fragment() {
         // the fragment initialization parameters, e.g. ARG_ITEM_NUMBER
         private const val ARG_PARAM1 = "param1"
         private const val ARG_PARAM2 = "param2"
-        private val CLASS_LOAD_TIME = Instant.now()
+        private val CLASS_LOAD_TIME = Instant.now().truncatedTo(ChronoUnit.HOURS)
 
         fun Float.timeHack(): Instant {
             return CLASS_LOAD_TIME.plusSeconds(this.toLong())

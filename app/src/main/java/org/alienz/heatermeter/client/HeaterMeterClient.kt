@@ -5,10 +5,7 @@ import com.google.gson.Gson
 import com.launchdarkly.eventsource.EventHandler
 import com.launchdarkly.eventsource.EventSource
 import com.launchdarkly.eventsource.MessageEvent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.*
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
@@ -16,6 +13,8 @@ import org.alienz.heatermeter.data.*
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.converter.scalars.ScalarsConverterFactory
+import java.io.IOException
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.time.Instant
 import kotlin.coroutines.CoroutineContext
@@ -38,11 +37,16 @@ class HeaterMeterClient(private val baseUrl: URL) :
     val hm = retrofit.create(HeaterMeter::class.java)
     private val gson = Gson()
 
-    fun all(): Pair<ReceiveChannel<Event<Sample>>, ReceiveChannel<ProbeName>> {
+    suspend fun all(): Pair<ReceiveChannel<Event<Sample>>, ReceiveChannel<ProbeName>> {
         val (samples, names) = stream()
 
         val combiner = produce {
-            history().consumeEach { send(it) }
+            try {
+                history().consumeEach { send(it) }
+            } catch (e: IOException) {
+                Log.w(this@HeaterMeterClient::class.java.simpleName, "Failure processing history", e)
+            }
+
             samples.consumeEach { send(it) }
         }
 
@@ -127,17 +131,13 @@ class HeaterMeterClient(private val baseUrl: URL) :
         )
     }
 
-    private fun HeaterMeter.Event.Peaks.toSample(): Event<Sample> {
-        throw IllegalArgumentException()
-    }
-
-    fun stream(): Pair<ReceiveChannel<Event<Sample>>, Channel<ProbeName>> {
+    private fun stream(): Pair<ReceiveChannel<Event<Sample>>, Channel<ProbeName>> {
         val samples = Channel<Event<Sample>>(16)
         val names = Channel<ProbeName>(16)
 
         val handler = object : EventHandler {
             override fun onOpen() {
-                samples.sendBlocking(Event.StreamOpened<Sample>())
+                samples.sendBlocking(Event.StreamOpened())
             }
 
             override fun onComment(comment: String?) {
@@ -156,11 +156,6 @@ class HeaterMeterClient(private val baseUrl: URL) :
                             names.sendBlocking(ProbeName(index = index, name = temp.n))
                         }
                     }
-//                    "peaks" ->
-//                        gson.fromJson(
-//                            messageEvent.data,
-//                            HeaterMeter.Event.Peaks::class.java
-//                        ).toSample()
                     "alarm" -> throw IllegalArgumentException() // admin/lm/alarm
                     else -> Log.d(
                         this::class.java.toString(),
@@ -170,7 +165,7 @@ class HeaterMeterClient(private val baseUrl: URL) :
             }
 
             override fun onClosed() {
-                samples.sendBlocking<Event<Sample>>(
+                samples.sendBlocking(
                     Event.StreamClosed()
                 )
             }
@@ -181,19 +176,24 @@ class HeaterMeterClient(private val baseUrl: URL) :
                     "SSE error: ${t?.message}",
                     t
                 )
-                // t?.apply { throw this }
             }
         }
 
-        val eventSource = EventSource.Builder(
-            handler,
-            URL(baseUrl, "/luci/lm/stream").toURI()
-        )
+        val eventSource = EventSource
+            .Builder(
+                handler,
+                URL(baseUrl, "/luci/lm/stream").toURI()
+            )
             .build()
 
         samples.invokeOnClose {
             eventSource.close()
             names.cancel()
+        }
+
+        names.invokeOnClose {
+            eventSource.close()
+            samples.cancel()
         }
 
         eventSource.start()

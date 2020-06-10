@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
+import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import android.widget.Toast
@@ -24,7 +25,7 @@ class SampleService : Service(), CoroutineScope, SharedPreferences.OnSharedPrefe
     private val coroutineExceptionHandler = CoroutineExceptionHandler { _, t ->
         Log.e(this@SampleService::class.qualifiedName, "Failed: ${t.message}", t)
         GlobalScope.launch(Dispatchers.Main) {
-            Toast.makeText(this@SampleService.applicationContext, t.message, Toast.LENGTH_SHORT)
+            Toast.makeText(applicationContext, t.message, Toast.LENGTH_SHORT)
                 .show()
         }
     }
@@ -74,14 +75,16 @@ class SampleService : Service(), CoroutineScope, SharedPreferences.OnSharedPrefe
 
     @ExperimentalCoroutinesApi
     suspend fun streamToDb(sharedPreferences: SharedPreferences) {
-        val serverUrl = sharedPreferences.getString(SettingsFragment.serverUrl, null) ?: return
+        val server = sharedPreferences.getString(SettingsFragment.serverUrl, null) ?: return
+
+        @Suppress("BlockingMethodInNonBlockingContext")
+        val serverUrl = URL(server)
 
         val db = AppDatabase.getInstance(applicationContext)
         val samplesDao = db.samples()
         val namesDao = db.names()
 
         withContext(coroutineExceptionHandler + Dispatchers.IO) {
-            val serverUrl = URL(serverUrl)
             val client = HeaterMeterClient(serverUrl)
             val (samples, names) = client.all()
 
@@ -96,7 +99,7 @@ class SampleService : Service(), CoroutineScope, SharedPreferences.OnSharedPrefe
                         }
                     }
                 }
-            }
+            }.invokeOnCompletion { samples.cancel() }
 
             launch {
                 names.consume {
@@ -105,16 +108,21 @@ class SampleService : Service(), CoroutineScope, SharedPreferences.OnSharedPrefe
                         val e = receive()
                         if (seen[e.index] != e.name) {
                             Log.i("ProbeName", "received $e")
-                            namesDao.insert()
+                            namesDao.insert(e)
                             seen[e.index] = e.name
                         }
                     }
                 }
-            }
+            }.invokeOnCompletion { names.cancel() }
         }
     }
 
-    override fun onBind(intent: Intent): IBinder? = null
+    inner class SampleBinder : Binder() {
+        val service: SampleService
+            get() = this@SampleService
+    }
+
+    override fun onBind(intent: Intent): IBinder = SampleBinder()
 
     override val coroutineContext: CoroutineContext
         get() = Dispatchers.Main + coroutineExceptionHandler
